@@ -6,30 +6,31 @@ Please cite our work if the code is helpful to you.
 """
 
 import torch
+from tqdm import tqdm
 
 from deeper.callbacks.default import CallbackBase
 from deeper.utils import comm
 from deeper.utils import dist
-from tqdm import tqdm
 
 
 class Evaluator(CallbackBase):
     def on_training_epoch_end(self):
+        self.trainer.engine.eval()
         self.eval()
+        self.trainer.engine.train()
 
     def eval(self):
         self.trainer.logger.info(">>>>>>>>>>>>>>>> Start Evaluation >>>>>>>>>>>>>>>>")
-        self.trainer.model.eval()
+
         test_loss = 0.0
         correct = 0
-
         val_iter = enumerate(tqdm(self.trainer.val_loader, desc="Validation")) \
             if dist.is_main_process() else enumerate(self.trainer.val_loader)
         for i, batch in val_iter:
             with torch.no_grad():
                 batch = comm.convert_and_move_tensor(batch, self.trainer.mixed_precision, device=self.engine.local_rank)
                 data, target = comm.move_tensor_to_device(batch, self.engine.local_rank)
-                output, loss = self.trainer.model(data, target)
+                output, loss = self.trainer.engine(data, target)
                 pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
                 correct += pred.eq(target.view_as(pred)).sum()
 

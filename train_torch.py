@@ -81,7 +81,7 @@ def run(hparams):
     # EPOCH LOOP
     for epoch in range(1, hparams.epochs + 1):
         # TRAINING LOOP
-        model.train()
+        engine.train()
         for batch_idx, (data, target) in enumerate(train_loader):
             data, target = data.to(device), target.to(device)
             optimizer.zero_grad()
@@ -100,7 +100,7 @@ def run(hparams):
         scheduler.step()
 
         # TESTING LOOP
-        model.eval()
+        engine.eval()
         test_loss = 0
         correct = 0
         with torch.no_grad():

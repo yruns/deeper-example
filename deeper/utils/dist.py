@@ -49,7 +49,6 @@ def synchronize():
     # else:
 
 
-
 def all_reduce_sum(tensor):
     if not is_distributed():
         return tensor

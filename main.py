@@ -11,6 +11,7 @@ import torch.utils.data
 import torchvision.transforms as T
 from loguru import logger
 from torch import nn
+import torchvision
 from torch.utils.data import DataLoader
 from torchvision.datasets import MNIST
 
@@ -20,39 +21,44 @@ from deeper.thirdparty.logging import WandbWrapper
 from deeper.thirdparty.logging import logger
 from deeper.utils import comm
 
+os.environ["TORCH_CUDA_ARCH_LIST"] = "8.0"
+
 DATASETS_PATH = path.join(path.dirname(__file__), "..", "..", "Datasets")
 
+
 class Net(nn.Module):
-    def __init__(self) -> None:
-        super().__init__()
-        self.conv1 = nn.Conv2d(1, 32, 3, 1)
-        self.conv2 = nn.Conv2d(32, 64, 3, 1)
-        self.dropout1 = nn.Dropout(0.25)
-        self.dropout2 = nn.Dropout(0.5)
-        self.fc1 = nn.Linear(9216, 128)
-        self.fc2 = nn.Linear(128, 10)
+    def __init__(self, args):
+        super(Net, self).__init__()
+        self.conv1 = nn.Conv2d(3, 6, 5)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.conv2 = nn.Conv2d(6, 16, 5)
+        self.fc1 = nn.Linear(16 * 5 * 5, 120)
+        self.fc2 = nn.Linear(120, 84)
 
-    def forward(self, x, target):
-        x = self.conv1(x)
-        x = F.relu(x)
-        x = self.conv2(x)
-        x = F.relu(x)
-        x = F.max_pool2d(x, 2)
-        x = self.dropout1(x)
-        x = torch.flatten(x, 1)
-        x = self.fc1(x)
-        x = F.relu(x)
-        x = self.dropout2(x)
-        x = self.fc2(x)
 
-        output = F.log_softmax(x, dim=1)
-        loss = F.nll_loss(output, target)
-        return output, loss
+        self.fc3 = nn.Linear(84, 10)
+
+    def forward(self, x):
+        # x = self.pool(F.relu(self.conv1(x.to(torch.float32)).to(torch.bfloat16)))
+
+        with torch.cuda.amp.autocast(dtype=torch.float32):
+            x = self.pool(F.relu(self.conv1(x)))
+        x = x.to(torch.bfloat16)
+        x = self.pool(F.relu(self.conv2(x)))
+        x = x.view(-1, 16 * 5 * 5)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+
+        x = self.fc3(x)
+        return x
+
 
 class Trainer(TrainerBase):
 
     def __init__(self, hparams, logger, debug=False, callbacks=None):
         super().__init__()
+        self.running_loss = None
+        self.criterion = None
         self.hparams = hparams
         self.logger = logger
         self.max_epoch = hparams.num_train_epochs
@@ -65,18 +71,22 @@ class Trainer(TrainerBase):
 
     def configure_model(self):
         logger.info("=> creating model ...")
-        self.model = Net()
+        self.model = Net(self.hparams)
         num_parameters = comm.count_parameters(self.model)
         logger.info(f"Number of parameters: {num_parameters}")
 
     def configure_dataloader(self):
         # Get the dataset
-        transform = T.Compose([T.ToTensor(), T.Normalize((0.1307,), (0.3081,))])
+        transform = T.Compose(
+            [T.ToTensor(), T.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
+        )
 
-        self.train_dataset = MNIST(DATASETS_PATH, download=dist.is_main_process(), train=True,
-                              transform=transform)
-        self.val_dataset = MNIST(DATASETS_PATH, download=dist.is_main_process(), train=False,
-                             transform=transform)
+        self.train_dataset = torchvision.datasets.CIFAR10(
+            root="./data", train=True, download=True, transform=transform
+        )
+        self.val_dataset = torchvision.datasets.CIFAR10(
+            root="./data", train=False, download=True, transform=transform
+        )
 
         val_sampler = torch.utils.data.distributed.DistributedSampler(
             self.val_dataset, shuffle=False, drop_last=False
@@ -85,7 +95,6 @@ class Trainer(TrainerBase):
             self.val_dataset, shuffle=False, sampler=val_sampler,
             batch_size=self.hparams.per_device_eval_batch_size, num_workers=self.hparams.num_workers
         )
-        print("AAAA")
 
     def setup_post(self):
         self.engine, self.optimizer, self.train_loader, self.lr_scheduler = deepspeed.initialize(
@@ -106,6 +115,9 @@ class Trainer(TrainerBase):
         else:
             self.mixed_precision = "fp32"
 
+        self.criterion = nn.CrossEntropyLoss()
+        self.running_loss = 0.0
+
     def configure_wandb(self):
         # When debugging, we don't need to log anything.
         self.wandb = WandbWrapper(
@@ -125,11 +137,13 @@ class Trainer(TrainerBase):
         batch_data = comm.convert_and_move_tensor(batch_data, self.mixed_precision, device=self.engine.local_rank)
         data, target = batch_data
 
-        output, loss = self.engine(data, target)
+        outputs = self.engine(data)
+        loss = self.criterion(outputs, target)
         self.engine.backward(loss)
         self.engine.step()
 
-        reduced_loss = dist.all_reduce_average(loss)
+        # reduced_loss = dist.all_reduce_average(loss)
+        reduced_loss = loss
         # Anything you want to log in terminal
         self.comm_info["terminal_log"] = {"loss": reduced_loss, "data": torch.mean(data)}
         # Anything you want to log in wandb
@@ -150,13 +164,13 @@ def main(hparams):
 
     hparams.ds_config = {
         "train_batch_size": hparams.per_device_train_batch_size * dist.get_world_size()
-                                * hparams.gradient_accumulation_steps,
-        "gradient_accumulation_steps": hparams.gradient_accumulation_steps,
+                            * hparams.gradient_accumulation_steps,
+        # "gradient_accumulation_steps": 1,
         "steps_per_print": 2000,
         "optimizer": {
             "type": "Adam",
             "params": {
-                "lr": hparams.lr,
+                "lr": 0.001,
                 "betas": [0.8, 0.999],
                 "eps": 1e-8,
                 "weight_decay": 3e-7,
@@ -167,12 +181,12 @@ def main(hparams):
             "params": {
                 "warmup_min_lr": 0,
                 "warmup_max_lr": 0.001,
-                "warmup_num_steps": 100,
+                "warmup_num_steps": 1000,
             },
         },
         "gradient_clipping": 1.0,
         "prescale_gradients": False,
-        "bf16": {"enabled": False},
+        "bf16": {"enabled": True},
         "fp16": {
             "enabled": False,
             "fp16_master_weights_and_grads": False,
@@ -207,10 +221,10 @@ def main(hparams):
 
     from deeper.callbacks.evaluator import Evaluator
     trainer = Trainer(hparams, logger, debug=False, callbacks=[
-        Resumer(checkpoint="output/checkpoints/epoch_1"),
+        Resumer(checkpoint="output/checkpoints/epoch_5"),
         IterationTimer(warmup_iter=2),
         InformationWriter(log_interval=1),
-        Evaluator(),
+        # Evaluator(),
         CheckpointSaver(save_last_only=False),
     ])
     trainer.fit()

@@ -54,6 +54,7 @@ def sum_model_parameters(model):
         total_params += torch.sum(param)
     return total_params
 
+
 def convert_and_move_tensor(input_value, dtype, device):
     input_value = convert_tensor_to_dtype(input_value, dtype)
     input_value = move_tensor_to_device(input_value, device)

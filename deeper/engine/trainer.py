@@ -1,7 +1,7 @@
 import weakref
+from typing import *
 
 from deepspeed.runtime.engine import DeepSpeedEngine
-from typing import *
 
 from deeper.callbacks.misc import *
 from deeper.utils import dist
@@ -126,7 +126,6 @@ class TrainerBase(object):
 
         self.configure_criteria()
         self.configure_scaler()
-
 
     def fit(self):
         self.setup()

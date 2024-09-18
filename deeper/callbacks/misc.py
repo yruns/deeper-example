@@ -142,12 +142,11 @@ class CheckpointSaver(CallbackBase):
             "epoch": self.trainer.epoch,
             "completed_steps": self.trainer.completed_steps,
         }
-        self.engine.save_checkpoint(output_dir, client_state=client_state)
+        self.trainer.engine.save_checkpoint(output_dir, client_state=client_state)
 
         import torch
         from ..utils import comm
         self.logger.info(f"### Model weight: {comm.sum_model_parameters(self.trainer.model)}")
-        # self.logger.info(f"### Optimizer weight: {self.trainer.optimizer.param_groups}")
         self.logger.info(f"### Optimizer weight: {torch.sum(list(self.trainer.optimizer.state.keys())[0])}")
 
         if self.save_lastest_only and self.last_checkpoint is not None and dist.is_main_process():
@@ -171,7 +170,7 @@ class Resumer(CallbackBase):
         if not os.path.exists(self.checkpoint):
             raise FileNotFoundError(f"=> No checkpoint found at: {self.checkpoint}")
         self.logger.info(f"=> Resuming from checkpoint: {self.checkpoint}")
-        _, client_state = self.engine.load_checkpoint(self.checkpoint)
+        _, client_state = self.trainer.engine.load_checkpoint(self.checkpoint)
         dist.synchronize()
 
         import torch
@@ -181,56 +180,3 @@ class Resumer(CallbackBase):
 
         self.trainer.completed_steps = client_state["completed_steps"]
         self.trainer.start_epoch = client_state["epoch"] + 1
-
-
-class CheckpointLoader(CallbackBase):
-    def __init__(self, keywords="", replacement=None, strict=True):
-        self.keywords = keywords
-        self.replacement = replacement if replacement is not None else keywords
-        self.strict = strict
-
-    # def on_training_phase_start(self):
-    #     self.logger.info("=> Loading checkpoint & weight ...")
-    #     if self.trainer.cfg.weight and os.path.isfile(self.trainer.cfg.weight):
-    #         self.logger.info(f"Loading weight at: {self.trainer.cfg.weight}")
-    #         checkpoint = torch.load(
-    #             self.trainer.cfg.weight,
-    #             map_location=lambda storage, loc: storage.cuda(),
-    #         )
-    #         self.logger.info(
-    #             f"Loading layer weights with keyword: {self.keywords}, "
-    #             f"replace keyword with: {self.replacement}"
-    #         )
-    #         weight = OrderedDict(
-    #             [
-    #                 (key.replace(self.keywords, self.replacement), value)
-    #                 for key, value in checkpoint["state_dict"].items()
-    #                 if self.keywords in key
-    #             ]
-    #         )
-    #         # weight = OrderedDict()
-    #         # for k, v in checkpoint["state_dict"].items():
-    #         #     if k.startswith('module.'):
-    #         #         # remove module
-    #         #         k = k[7:]  # module.xxx.xxx -> xxx.xxx
-    #         #     else:
-    #         #         # add module
-    #         #         k = 'module.' + k  # xxx.xxx -> module.xxx.xxx
-    #         #     weight[k] = v
-    #         load_state_info = self.trainer.model.load_state_dict(
-    #             weight, strict=self.strict
-    #         )
-    #         self.logger.info(f"Missing keys: {load_state_info[0]}")
-    #         if self.trainer.cfg.resume:
-    #             self.logger.info(
-    #                 f"Resuming train at eval epoch: {checkpoint['epoch']}"
-    #             )
-    #             self.trainer.start_epoch = checkpoint["epoch"]
-    #             self.trainer.best_metric_value = checkpoint["best_metric_value"]
-    #             self.trainer.best_metric_epoch = checkpoint["epoch"]
-    #             self.trainer.optimizer.load_state_dict(checkpoint["optimizer"])
-    #             self.trainer.scheduler.load_state_dict(checkpoint["scheduler"])
-    #             if self.trainer.cfg.enable_amp:
-    #                 self.trainer.scaler.load_state_dict(checkpoint["scaler"])
-    #     else:
-    #         self.logger.info(f"No weight found at: {self.trainer.cfg.weight}")

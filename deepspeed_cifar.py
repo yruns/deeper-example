@@ -9,7 +9,6 @@ import torch.nn.functional as F
 import torchvision
 import torchvision.transforms as transforms
 from deepspeed.accelerator import get_accelerator
-from deepspeed.moe.utils import split_params_into_different_moe_groups_for_optimizer
 from torch.utils.data import Sampler
 
 os.environ["TORCH_CUDA_ARCH_LIST"] = "8.0"
@@ -51,57 +50,10 @@ def add_argument():
     # For ZeRO Optimization.
     parser.add_argument(
         "--stage",
-        default=0,
+        default=2,
         type=int,
         choices=[0, 1, 2, 3],
         help="Datatype used for training",
-    )
-
-    # For MoE (Mixture of Experts).
-    parser.add_argument(
-        "--moe",
-        default=False,
-        action="store_true",
-        help="use deepspeed mixture of experts (moe)",
-    )
-    parser.add_argument(
-        "--ep-world-size", default=1, type=int, help="(moe) expert parallel world size"
-    )
-    parser.add_argument(
-        "--num-experts",
-        type=int,
-        nargs="+",
-        default=[
-            1,
-        ],
-        help="number of experts list, MoE related.",
-    )
-    parser.add_argument(
-        "--mlp-type",
-        type=str,
-        default="standard",
-        help="Only applicable when num-experts > 1, accepts [standard, residual]",
-    )
-    parser.add_argument(
-        "--top-k", default=1, type=int, help="(moe) gating top 1 and 2 supported"
-    )
-    parser.add_argument(
-        "--min-capacity",
-        default=0,
-        type=int,
-        help="(moe) minimum capacity of an expert regardless of the capacity_factor",
-    )
-    parser.add_argument(
-        "--noisy-gate-policy",
-        default=None,
-        type=str,
-        help="(moe) noisy gating (only supported with top-1). Valid values are None, RSample, and Jitter",
-    )
-    parser.add_argument(
-        "--moe-param-group",
-        default=False,
-        action="store_true",
-        help="(moe) create separate moe param groups, required when using ZeRO w. MoE",
     )
 
     # Include DeepSpeed configuration arguments.
@@ -112,10 +64,6 @@ def add_argument():
     return args
 
 
-def create_moe_param_groups(model):
-    """Create separate parameter groups for each expert."""
-    parameters = {"params": [p for p in model.parameters()], "name": "parameters"}
-    return split_params_into_different_moe_groups_for_optimizer(parameters)
 
 
 def get_ds_config(args):
@@ -179,28 +127,8 @@ class Net(nn.Module):
         self.fc1 = nn.Linear(16 * 5 * 5, 120)
         self.fc2 = nn.Linear(120, 84)
 
-        self.moe = args.moe
-        if self.moe:
-            fc3 = nn.Linear(84, 84)
-            self.moe_layer_list = []
-            for n_e in args.num_experts:
-                # Create moe layers based on the number of experts.
-                self.moe_layer_list.append(
-                    deepspeed.moe.layer.MoE(
-                        hidden_size=84,
-                        expert=fc3,
-                        num_experts=n_e,
-                        ep_size=args.ep_world_size,
-                        use_residual=args.mlp_type == "residual",
-                        k=args.top_k,
-                        min_capacity=args.min_capacity,
-                        noisy_gate_policy=args.noisy_gate_policy,
-                    )
-                )
-            self.moe_layer_list = nn.ModuleList(self.moe_layer_list)
-            self.fc4 = nn.Linear(84, 10)
-        else:
-            self.fc3 = nn.Linear(84, 10)
+
+        self.fc3 = nn.Linear(84, 10)
 
     def forward(self, x):
         # x = self.pool(F.relu(self.conv1(x.to(torch.float32)).to(torch.bfloat16)))
@@ -213,12 +141,7 @@ class Net(nn.Module):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
 
-        if self.moe:
-            for layer in self.moe_layer_list:
-                x, _, _ = layer(x)
-            x = self.fc4(x)
-        else:
-            x = self.fc3(x)
+        x = self.fc3(x)
         return x
 
 
@@ -359,10 +282,6 @@ def main(args):
     # Get list of parameters that require gradients.
     parameters = filter(lambda p: p.requires_grad, net.parameters())
 
-    # If using MoE, create separate param groups for each expert.
-    if args.moe_param_group:
-        parameters = create_moe_param_groups(net)
-
     # Initialize DeepSpeed to use the following features.
     #   1) Distributed model.
     #   2) Distributed data loader.
@@ -381,7 +300,7 @@ def main(args):
     resume_step = 0
     resume = False
 
-    # resume = True
+    resume = True
     _, client_state = model_engine.load_checkpoint("checkpoint_0.pt")
     print("Loaded checkpoint", sum_model_parameters(model_engine))
     start_epoch = client_state["epoch"] + 1
