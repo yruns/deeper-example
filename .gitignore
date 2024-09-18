@@ -1,0 +1,14 @@
+.idea
+.iml
+
+/**/__pycache__/
+
+*.png
+*.jpg
+*.log
+
+logs/
+
+
+test.py
+tmp.py
