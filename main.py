@@ -196,7 +196,7 @@ def main(hparams):
         "preserve_fp32": True,
         "wall_clock_breakdown": False,
         "zero_optimization": {
-            "stage": 0,
+            "stage": 2,
             "allgather_partitions": True,
             "reduce_scatter": True,
             "allgather_bucket_size": 50000000,
@@ -213,7 +213,7 @@ def main(hparams):
     logger.add(f"logs/{time.strftime('%Y-%m-%d_%H-%M-%S')}")
 
     ### Start command:
-    ### python -m accelerate.commands.launch --num_processes=2 --main_process_port 10002 tutorials/deeper_accl.py
+    ### /data2/shyue/anaconda3/envs/deeper/bin/deepspeed --master_port=24932 --num_gpus=2 main.py
 
     from deeper.callbacks.evaluator import Evaluator
     trainer = Trainer(hparams, logger, debug=False, callbacks=[
