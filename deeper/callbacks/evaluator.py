@@ -29,7 +29,7 @@ class Evaluator(CallbackBase):
         for i, batch in val_iter:
             with torch.no_grad():
                 batch = comm.convert_and_move_tensor(batch, self.trainer.mixed_precision, device=self.engine.local_rank)
-                data, target = comm.move_tensor_to_device(batch, self.engine.local_rank)
+                data, target = batch
                 output, loss = self.trainer.engine(data, target)
                 pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
                 correct += pred.eq(target.view_as(pred)).sum()

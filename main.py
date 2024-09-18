@@ -8,12 +8,11 @@ import torch.optim
 import torch.optim
 import torch.utils.data
 import torch.utils.data
+import torchvision
 import torchvision.transforms as T
 from loguru import logger
 from torch import nn
-import torchvision
 from torch.utils.data import DataLoader
-from torchvision.datasets import MNIST
 
 from deeper.callbacks.misc import *
 from deeper.engine import TrainerBase
@@ -21,7 +20,7 @@ from deeper.thirdparty.logging import WandbWrapper
 from deeper.thirdparty.logging import logger
 from deeper.utils import comm
 
-os.environ["TORCH_CUDA_ARCH_LIST"] = "8.0"
+# os.environ["TORCH_CUDA_ARCH_LIST"] = "8.0"
 
 DATASETS_PATH = path.join(path.dirname(__file__), "..", "..", "Datasets")
 
@@ -35,22 +34,20 @@ class Net(nn.Module):
         self.fc1 = nn.Linear(16 * 5 * 5, 120)
         self.fc2 = nn.Linear(120, 84)
 
-
         self.fc3 = nn.Linear(84, 10)
 
-    def forward(self, x):
-        # x = self.pool(F.relu(self.conv1(x.to(torch.float32)).to(torch.bfloat16)))
+        self.criterion = nn.CrossEntropyLoss()
 
-        with torch.cuda.amp.autocast(dtype=torch.float32):
-            x = self.pool(F.relu(self.conv1(x)))
-        x = x.to(torch.bfloat16)
+    def forward(self, x, labels):
+        x = self.pool(F.relu(self.conv1(x)))
         x = self.pool(F.relu(self.conv2(x)))
         x = x.view(-1, 16 * 5 * 5)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
 
         x = self.fc3(x)
-        return x
+        loss = self.criterion(x, labels)
+        return x, loss
 
 
 class Trainer(TrainerBase):
@@ -115,7 +112,6 @@ class Trainer(TrainerBase):
         else:
             self.mixed_precision = "fp32"
 
-        self.criterion = nn.CrossEntropyLoss()
         self.running_loss = 0.0
 
     def configure_wandb(self):
@@ -137,8 +133,8 @@ class Trainer(TrainerBase):
         batch_data = comm.convert_and_move_tensor(batch_data, self.mixed_precision, device=self.engine.local_rank)
         data, target = batch_data
 
-        outputs = self.engine(data)
-        loss = self.criterion(outputs, target)
+        _, loss = self.engine(data, target)
+
         self.engine.backward(loss)
         self.engine.step()
 
@@ -165,7 +161,7 @@ def main(hparams):
     hparams.ds_config = {
         "train_batch_size": hparams.per_device_train_batch_size * dist.get_world_size()
                             * hparams.gradient_accumulation_steps,
-        # "gradient_accumulation_steps": 1,
+        "gradient_accumulation_steps": 1,
         "steps_per_print": 2000,
         "optimizer": {
             "type": "Adam",
@@ -200,7 +196,7 @@ def main(hparams):
         "preserve_fp32": True,
         "wall_clock_breakdown": False,
         "zero_optimization": {
-            "stage": 2,
+            "stage": 0,
             "allgather_partitions": True,
             "reduce_scatter": True,
             "allgather_bucket_size": 50000000,
@@ -224,7 +220,7 @@ def main(hparams):
         Resumer(checkpoint="output/checkpoints/epoch_5"),
         IterationTimer(warmup_iter=2),
         InformationWriter(log_interval=1),
-        # Evaluator(),
+        Evaluator(),
         CheckpointSaver(save_last_only=False),
     ])
     trainer.fit()
