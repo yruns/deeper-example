@@ -22,7 +22,6 @@ from deeper.utils import comm
 
 DATASETS_PATH = path.join(path.dirname(__file__), "..", "..", "Datasets")
 
-
 class Net(nn.Module):
     def __init__(self) -> None:
         super().__init__()
@@ -49,7 +48,6 @@ class Net(nn.Module):
         output = F.log_softmax(x, dim=1)
         loss = F.nll_loss(output, target)
         return output, loss
-
 
 class Trainer(TrainerBase):
 
@@ -147,6 +145,8 @@ def main(hparams):
     hparams.log_tag = "init_1"
     hparams.num_workers = 4
     hparams.gradient_accumulation_steps = 1
+    hparams.per_device_train_batch_size = 128
+    hparams.lr = 1e-3
 
     hparams.ds_config = {
         "train_batch_size": hparams.per_device_train_batch_size * dist.get_world_size()
@@ -156,7 +156,7 @@ def main(hparams):
         "optimizer": {
             "type": "Adam",
             "params": {
-                "lr": 0.001,
+                "lr": hparams.lr,
                 "betas": [0.8, 0.999],
                 "eps": 1e-8,
                 "weight_decay": 3e-7,
@@ -167,12 +167,12 @@ def main(hparams):
             "params": {
                 "warmup_min_lr": 0,
                 "warmup_max_lr": 0.001,
-                "warmup_num_steps": 1000,
+                "warmup_num_steps": 100,
             },
         },
         "gradient_clipping": 1.0,
         "prescale_gradients": False,
-        "bf16": {"enabled": True},
+        "bf16": {"enabled": False},
         "fp16": {
             "enabled": False,
             "fp16_master_weights_and_grads": False,
@@ -207,7 +207,7 @@ def main(hparams):
 
     from deeper.callbacks.evaluator import Evaluator
     trainer = Trainer(hparams, logger, debug=False, callbacks=[
-        # Resumer(checkpoint="output/step_100"),
+        Resumer(checkpoint="output/checkpoints/epoch_1"),
         IterationTimer(warmup_iter=2),
         InformationWriter(log_interval=1),
         Evaluator(),
@@ -226,19 +226,12 @@ if __name__ == "__main__":
     )
     parser.add_argument("--num_train_epochs", type=int, default=8, metavar="N",
                         help="number of epochs to train (default: 14)")
-    parser.add_argument("--lr", type=float, default=1.0, metavar="LR", help="learning rate (default: 1.0)")
     parser.add_argument("--gamma", type=float, default=0.7, metavar="M", help="Learning rate step gamma (default: 0.7)")
     parser.add_argument("--seed", type=int, default=1, metavar="S", help="random seed (default: 1)")
     parser.add_argument(
-        "--per_device_train_batch_size",
-        type=int,
-        default=192,
-        help="Batch size (per device) for the training dataloader.",
-    )
-    parser.add_argument(
         "--per_device_eval_batch_size",
         type=int,
-        default=192,
+        default=64,
         help="Batch size (per device) for the evaluation dataloader.",
     )
 

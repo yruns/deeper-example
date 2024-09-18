@@ -143,8 +143,7 @@ class TrainerBase(object):
             self.logger.info(">>>>>>>>>>>>>>>> Start Training >>>>>>>>>>>>>>>>")
             for self.epoch in range(self.start_epoch, self.max_epoch):
                 self.engine.train()
-                if dist.is_distributed():
-                    self.train_loader.data_sampler.set_epoch(self.epoch)
+                self.train_loader.data_sampler.set_epoch(self.epoch)
 
                 if self.debug:
                     from itertools import islice

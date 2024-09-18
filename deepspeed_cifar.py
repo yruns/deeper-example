@@ -382,11 +382,11 @@ def main(args):
     resume = False
 
     # resume = True
-    # _, client_state = model_engine.load_checkpoint("checkpoint_1.pt")
-    # print("Loaded checkpoint", sum_model_parameters(model_engine))
-    # start_epoch = client_state["epoch"] + 1
-    # resume_step = client_state["step"]
-    # print("Loaded checkpoint", start_epoch, resume_step)
+    _, client_state = model_engine.load_checkpoint("checkpoint_0.pt")
+    print("Loaded checkpoint", sum_model_parameters(model_engine))
+    start_epoch = client_state["epoch"] + 1
+    resume_step = client_state["step"]
+    print("Loaded checkpoint", start_epoch, resume_step)
 
     # Get the local device name (str) and local rank (int).
     local_device = get_accelerator().device_name(model_engine.local_rank)

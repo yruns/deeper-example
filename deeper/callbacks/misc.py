@@ -176,8 +176,8 @@ class Resumer(CallbackBase):
 
         import torch
         from ..utils import comm
-        self.logger.info(f"### Model weight: {comm.sum_model_parameters(self.trainer.model)}")
-        self.logger.info(f"### Optimizer weight: {torch.sum(list(self.trainer.optimizer.state.keys())[0])}")
+        self.logger.info(f"### Model weight: {comm.sum_model_parameters(self.trainer.engine)}")
+        self.logger.info(f"### Optimizer weight: {torch.sum(list(self.engine.optimizer.state.keys())[0])}")
 
         self.trainer.completed_steps = client_state["completed_steps"]
         self.trainer.start_epoch = client_state["epoch"] + 1
